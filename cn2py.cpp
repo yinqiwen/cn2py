@@ -11,6 +11,9 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include <algorithm>
+#include <functional>
+#include <cctype>
 #include <stdint.h>
 #include "cn2py.h"
 
@@ -18,7 +21,9 @@ namespace cn2py
 {
     typedef std::map<int64_t, std::string> PyDict;
     typedef std::map<std::string, std::string> PhoneticSymbolDict;
+    typedef std::map<std::string, StringArray> PhrasePinyinDict;
     static PyDict g_py_dict;
+    static PhrasePinyinDict g_phrase_py_dict;
     static PhoneticSymbolDict g_phonetic_symbol_dict;
 
     static void init_phonetic_symbol_dict()
@@ -223,7 +228,7 @@ namespace cn2py
 
     int cn2pinyin(const std::string& cnstr, PinyinResult& result)
     {
-        if(g_py_dict.empty())
+        if (g_py_dict.empty())
         {
             return -1;
         }
@@ -232,7 +237,7 @@ namespace cn2py
         str2utf8codes(cnstr, codes);
         for (size_t i = 0; i < codes.size(); i++)
         {
-            StringSet ps;
+            StringArray pinyins;
             PyDict::iterator found = g_py_dict.find(codes[i]);
             if (found != g_py_dict.end())
             {
@@ -243,28 +248,37 @@ namespace cn2py
                 {
                     std::string new_str;
                     remove_phonetic(val, new_str);
-                    //printf("###%s -> %s\n", val.c_str(), new_str.c_str());
-                    ps.insert(new_str);
+                    pinyins.push_back(new_str);
                 }
             }
             else
             {
-                //pinyin.append(1, (char) codes[i]);
-                ps.insert(std::string(1, (char) codes[i]));
+                pinyins.push_back(std::string(1, (char) codes[i]));
             }
+            StringSet tmp;
+            StringArray uniq_pinyins;
+            for(size_t i = 0; i < pinyins.size(); i++)
+            {
+                if(!tmp.insert(pinyins[i]).second)
+                {
+                    continue;
+                }
+                uniq_pinyins.push_back(pinyins[i]);
+            }
+
             if (result.size() > 0)
             {
                 size_t prev_size = result.size();
-                for (size_t i = 0; i < ps.size() - 1; i++)
+                for (size_t i = 0; i < uniq_pinyins.size() - 1; i++)
                 {
                     //copy
                     result.insert(result.end(), result.begin(), result.begin() + prev_size);
                 }
                 //printf("###Result resize to %zu from %zu\n", result.size(), prev_size);
                 size_t offset = 0;
-                for (const std::string& v : ps)
+                for (const std::string& v : uniq_pinyins)
                 {
-                    for(size_t i = 0; i < prev_size; i++)
+                    for (size_t i = 0; i < prev_size; i++)
                     {
                         result[offset + i].push_back(v);
                     }
@@ -273,9 +287,66 @@ namespace cn2py
             }
             else
             {
-                for (const std::string& v : ps)
+                for (const std::string& v : uniq_pinyins)
                 {
                     result.push_back(StringArray(1, v));
+                }
+            }
+        }
+        return 0;
+    }
+
+    int words2piniyin(const StringArray& words, PinyinResult& result)
+    {
+        if (g_py_dict.empty())
+        {
+            return -1;
+        }
+        for(const std::string& word:words)
+        {
+            PhrasePinyinDict::iterator found = g_phrase_py_dict.find(word);
+            if(found != g_phrase_py_dict.end())
+            {
+                StringArray pys = found->second;
+                for(std::string& py:pys)
+                {
+                    std::string new_py;
+                    remove_phonetic(py, new_py);
+                    py = new_py;
+                }
+                if(result.empty())
+                {
+                    result.resize(1);
+                }
+                for(StringArray& prev:result)
+                {
+                    prev.insert(prev.end(),pys.begin(), pys.end());
+                }
+            }else
+            {
+                PinyinResult r;
+                cn2pinyin(word, r);
+                if(result.empty())
+                {
+                    result = r;
+                }
+                else
+                {
+                    size_t prev_size = result.size();
+                    for (size_t i = 0; i < r.size() - 1; i++)
+                    {
+                        //copy
+                        result.insert(result.end(), result.begin(), result.begin() + prev_size);
+                    }
+                    size_t offset = 0;
+                    for (const StringArray& v : r)
+                    {
+                        for (size_t i = 0; i < prev_size; i++)
+                        {
+                            result[offset + i].insert(result[offset + i].end(), v.begin(), v.end());
+                        }
+                        offset += prev_size;
+                    }
                 }
             }
         }
@@ -290,6 +361,10 @@ namespace cn2py
         while (std::getline(infile, line))
         {
             std::string new_line = trim(line);
+            if (new_line[0] == '#')
+            {
+                continue;
+            }
             std::vector<std::string> vals, val2;
             split(new_line, ':', vals);
             if (vals.size() < 2)
@@ -310,18 +385,48 @@ namespace cn2py
         }
         return 0;
     }
+
+    int load_phase_dict(const std::string& path)
+    {
+        std::ifstream infile(path);
+        std::string line;
+        while (std::getline(infile, line))
+        {
+            std::string new_line = trim(line);
+            if (new_line[0] == '#')
+            {
+                continue;
+            }
+            std::vector<std::string> vals, val2;
+            split(new_line, ':', vals);
+            if (vals.size() < 2)
+            {
+                printf("Invalid line:%s\n", new_line.c_str());
+                continue;
+            }
+            std::string cnstr = trim(vals[0]);
+            StringArray py;
+            split(trim(vals[1]),' ', py);
+            g_phrase_py_dict[cnstr] = py;
+            //printf("###%lld  %s %s  %s\n", utf8_code_int,utf8_code.c_str(), py.c_str(), cn.c_str());
+        }
+        return 0;
+    }
 }
 
 //int main()
 //{
 //    cn2py::load_dict("pinyin.txt");
+//    cn2py::load_phase_dict("pinyin_phrase.txt");
 //    while (std::cin)
 //    {
 //        std::string line;
 //        std::getline(std::cin, line);
 //        line = cn2py::trim(line);
 //        cn2py::PinyinResult rs;
-//        cn2py::cn2pinyin(line, rs);
+//        std::vector<std::string> words;
+//        cn2py::split(line, ' ', words);
+//        cn2py::words2piniyin(words, rs);
 //        for (const cn2py::StringArray& ss : rs)
 //        {
 //            for(const std::string& v:ss)

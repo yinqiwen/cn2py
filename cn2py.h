@@ -14,11 +14,13 @@
 namespace cn2py
 {
     int load_dict(const std::string& path);
+    int load_phase_dict(const std::string& path);
 
     typedef std::vector<std::string> StringArray;
     typedef std::vector<StringArray> PinyinResult;
 
     int cn2pinyin(const std::string& cnstr, PinyinResult& result);
+    int words2piniyin(const StringArray& words, PinyinResult& result);
 }
 
 
